@@ -49,7 +49,7 @@ VoxelMorph 專案的 mix_exp*、mix_cascade、mix_pyramid 用的都是這一份�
 
 ## 環境
 
-`venv/`（不進 git）：Python 3.10.1、torch 2.10.0+cu130、numpy 2.2.6、scipy 1.15.3、matplotlib 3.10.8、scikit-image 0.25.2、
+`venv/`（不進 git）：Python 3.10.1、torch 2.10.0+cu130（筆電；**AI 是 2.11.0+cu126**，因為 AI 的驅動最高只支援 CUDA 12.2，跟 AI 的 vxm_env 同版）、numpy 2.2.6、scipy 1.15.3、matplotlib 3.10.8、scikit-image 0.25.2、
 timm 1.0.30、ml_collections 1.1.0、natsort 8.4.0、tensorboard 2.21.0、pystrum 0.4（版本都對齊 VoxelMorph 專案的 vxm_env）。
 
 ## 用法（筆電）

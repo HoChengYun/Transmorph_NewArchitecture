@@ -5,7 +5,7 @@
 >
 > 跑的機器：**AI**。🔴 **一次只跑一顆**：這顆約用 13 GB，跟 VoxelMorph 那邊的訓練（cascade_pyramid 19 GB、pyramid_500 約 10 GB）不能同時跑。
 > 指令全部是 **cmd（命令提示字元）** 語法。
-> 最後更新：2026-10-17（建環境改以 virtualenv 為主，venv 當備案）
+> 最後更新：2026-10-17（建環境改以 virtualenv 為主，venv 當備案；AI 的 torch 改成 2.11.0+cu126，跟 AI 的 vxm_env 一樣）
 
 ---
 
@@ -76,14 +76,15 @@ deactivate
 venv\Scripts\activate.bat
 ```
 
-裝套件（torch 約 1.9 GB，要等一陣子；版本跟 vxm_env 一樣）：
+裝套件（torch 要等一陣子；**版本跟 AI 上的 vxm_env 一樣：torch 2.11.0+cu126**）。
+⚠️ 不要裝筆電用的 `+cu130`：AI 的驅動（537.42）最高只支援 CUDA 12.2，cu130 的 torch 會抓不到 GPU（`cuda.is_available()` 是 False）；cu126 在 AI 上可以用（vxm_env 就是這版）。
 
 ```bat
 python -m pip install --upgrade pip
 ```
 
 ```bat
-python -m pip install torch==2.10.0 torchvision==0.25.0 --index-url https://download.pytorch.org/whl/cu130
+python -m pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
 ```
 
 ```bat
@@ -96,7 +97,9 @@ python -m pip install numpy==2.2.6 scipy==1.15.3 matplotlib==3.10.8 scikit-image
 python -c "import torch, timm; print(torch.__version__, torch.cuda.is_available(), timm.__version__)"
 ```
 
-要看到 `2.10.0+cu130 True 1.0.30`。
+要看到 `2.11.0+cu126 True 1.0.30`。
+
+如果之前已經裝成 cu130（看到 `2.10.0+cu130 False`），先移除再裝上面那行：`python -m pip uninstall -y torch torchvision`
 
 ---
 
