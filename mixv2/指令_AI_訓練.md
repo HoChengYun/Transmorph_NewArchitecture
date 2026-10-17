@@ -5,7 +5,7 @@
 >
 > 跑的機器：**AI**。🔴 **一次只跑一顆**：這顆約用 13 GB，跟 VoxelMorph 那邊的訓練（cascade_pyramid 19 GB、pyramid_500 約 10 GB）不能同時跑。
 > 指令全部是 **cmd（命令提示字元）** 語法。
-> 最後更新：2026-10-17
+> 最後更新：2026-10-17（建環境改以 virtualenv 為主，venv 當備案）
 
 ---
 
@@ -27,14 +27,37 @@ cd /d D:\chengyun
 git clone https://github.com/HoChengYun/Transmorph_NewArchitecture.git
 ```
 
-建虛擬環境（借 VoxelMorph 那邊的 Python 3.10 來建；建好就跟 vxm_env 無關了）：
+建虛擬環境：用跟 vxm_env 同一個 Python 3.10（torch 2.10.0+cu130 要用這一版）。建好就跟 vxm_env 無關了。
+
+先查 vxm_env 用的是哪一個 Python：
 
 ```bat
-D:\chengyun\TRY_voxelmorph\vxm_env\Scripts\activate.bat
+type D:\chengyun\TRY_voxelmorph\vxm_env\pyvenv.cfg
 ```
+
+看 `home = ...` 那一行（例如 `home = C:\Users\xxx\.pyenv\pyenv-win\versions\3.10.1`），下面的 `<home 路徑>` 換成它。
 
 ```bat
 cd /d D:\chengyun\Transmorph_NewArchitecture
+```
+
+**用 virtualenv 建**（前後的雙引號要保留）：
+
+```bat
+virtualenv venv -p "<home 路徑>\python.exe"
+```
+
+| 出現 | 怎麼辦 |
+|---|---|
+| `'virtualenv' 不是內部或外部命令` | 改打 `"<home 路徑>\python.exe" -m virtualenv venv` |
+| 還是不行（`No module named virtualenv`）| 先 `"<home 路徑>\python.exe" -m pip install virtualenv`，再打上一行 |
+
+<details><summary>不用 virtualenv、改用 Python 內建的 venv 也可以（建出來一樣）</summary>
+
+venv 用的是「執行它的那個 Python」，所以先啟動 vxm_env 借它的 Python 3.10，建好再關掉：
+
+```bat
+D:\chengyun\TRY_voxelmorph\vxm_env\Scripts\activate.bat
 ```
 
 ```bat
@@ -44,6 +67,10 @@ python -m venv venv
 ```bat
 deactivate
 ```
+
+</details>
+
+啟動新環境：
 
 ```bat
 venv\Scripts\activate.bat
