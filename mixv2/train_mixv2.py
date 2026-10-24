@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
-"""TransMorph（基本版）在 mixed_v2 上訓練，設定跟 VoxelMorph 專案的 mix_exp3 對齊，只差網路架構。
+"""TransMorph（基本版）在 mixed_v2 上訓練。
 
-🟡 tm_mixv2（test 0.8139）就是這支（commit 38d3cd5）練的。2026-10-24 起之後的 TransMorph 改成盡量照官方訓練方式（見 README），這支算舊程式。
+2026-10-24 起預設改成官方的訓練方式（使用者：「不一定要特別和 mix_exp3 一樣」，跟 train_mixv2_diff.py 同一套）：
+  - Adam amsgrad，lr 1e-4 每輪 poly 0.9 遞減（同官方 train_TransMorph.py 的 adjust_learning_rate）
+  - 官方 trans.RandomFlip：三個方向各 50% 翻轉，受試者和 atlas 一起翻
+  訓練量（2.5 萬步）、影像大小、受試者 → atlas、存檔與挑 epoch 不變。
+🟡 --legacy = 舊設定（下面「跟 mix_exp3 一樣」那段：Adam、lr 固定、不翻轉），tm_mixv2（test 0.8139）就是舊設定練的
+  （commit 38d3cd5；--legacy 跟那版逐步相同，筆電驗證過）。
 
-跟 mix_exp3（ASD/run_train.py → voxelmorph-code/scripts/torch/train.py）一樣的地方：
+舊設定跟 mix_exp3（ASD/run_train.py → voxelmorph-code/scripts/torch/train.py）一樣的地方：
   - 受試者 → atlas（scan-to-atlas）；atlas = IXI/atlas_mni152_09c_v3.npz（MNI152 2009c）
   - 每一步隨機挑一位受試者（可重複），batch 1；每輪 100 步、250 輪 = 25,000 步
   - 損失 = −NCC（窗格 9）＋ λ × 位移場梯度的 L2，λ = 1（官方 NCC_vxm、Grad3d，就是 VoxelMorph 的同一套公式）
@@ -35,6 +40,7 @@ ap.add_argument('--epochs', type=int, default=250)
 ap.add_argument('--steps-per-epoch', type=int, default=100)
 ap.add_argument('--lr', type=float, default=1e-4)
 ap.add_argument('--lambda', dest='lam', type=float, default=1.0, help='平滑項權重（同 VoxelMorph 的 --lambda）')
+ap.add_argument('--legacy', action='store_true', help='舊設定（tm_mixv2）：Adam、lr 固定、不翻轉')
 ap.add_argument('--gpu', default='0')
 ap.add_argument('--save-every', type=int, default=5, help='每幾輪存一顆（要跟 eval_mixv2.py 的 --step 一樣）')
 ap.add_argument('--initial-epoch', type=int, default=0)
@@ -84,7 +90,12 @@ if args.load_model:
 else:
     model = build_model(img_size, window).to(device)
 model.train()
-optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+if args.legacy:
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+else:
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=0, amsgrad=True)      # 同官方
+    from data import trans                      # 官方 IXI/TransMorph/data/trans.py（common.py 已加進 sys.path）
+    flip = trans.RandomFlip(0)                  # 同官方；它的 __call__ 用了 Python 3.10 拿掉的 collections.Sequence，直接叫 sample()、tf()
 ncc = losses.NCC_vxm()                       # 窗格 9，回傳 −mean(cc)
 grad = losses.Grad3d(penalty='l2')
 atlas_t = torch.from_numpy(crop(atlas))[None, None].to(device)
@@ -101,19 +112,29 @@ def say(msg):
 n_par = sum(p.numel() for p in model.parameters())
 say('指令：' + ' '.join(sys.argv))
 say('架構：TransMorph（基本版、位移場），共 %d 個參數；影像 %s、Swin 視窗 %s；影像項 ncc（窗格 9），λ = %g；'
-    '%d 位訓練資料；每輪 %d 步、到第 %d 輪；lr %g（固定）' % (n_par, 'x'.join(map(str, img_size)), window, args.lam,
-                                                   len(files), args.steps_per_epoch, args.epochs, args.lr))
+    '%d 位訓練資料；每輪 %d 步、到第 %d 輪；%s' % (n_par, 'x'.join(map(str, img_size)), window, args.lam,
+                                          len(files), args.steps_per_epoch, args.epochs,
+                                          'lr %g（固定）【舊設定 --legacy】' % args.lr if args.legacy else
+                                          'Adam amsgrad lr %g（poly 0.9 遞減）；翻轉 開（三個方向各 50%%）【官方訓練方式】' % args.lr))
 done = 0
 for epoch in range(args.initial_epoch, args.epochs):
     if epoch % args.save_every == 0:
         save_model(model, os.path.join(args.model_dir, '%04d.pt' % epoch), epoch=epoch)
+    if not args.legacy:
+        for g in optimizer.param_groups:        # 同官方 adjust_learning_rate（同一輪內不變）
+            g['lr'] = round(args.lr * np.power(1 - epoch / args.epochs, 0.9), 8)
     for step in range(args.steps_per_epoch):
         t0 = time.time()
         m = np.load(files[np.random.randint(len(files))])['vol'].astype(np.float32)
         x = torch.from_numpy(crop(m))[None, None].to(device)
-        warped, flow = model(torch.cat([x, atlas_t], dim=1))     # 官方：第 0 個通道是 moving、第 1 個是 fixed
-        l_sim = ncc(atlas_t, warped)
-        l_reg = args.lam * grad(flow, atlas_t)
+        y = atlas_t
+        if not args.legacy:
+            flip.sample()                       # 同官方 Base.__call__：抽一次，兩張用同一組
+            x = torch.from_numpy(np.ascontiguousarray(flip.tf(crop(m)[None])))[None].to(device)
+            y = torch.from_numpy(np.ascontiguousarray(flip.tf(crop(atlas)[None])))[None].to(device)
+        warped, flow = model(torch.cat([x, y], dim=1))           # 官方：第 0 個通道是 moving、第 1 個是 fixed
+        l_sim = ncc(y, warped)
+        l_reg = args.lam * grad(flow, y)
         loss = l_sim + l_reg
         optimizer.zero_grad()
         loss.backward()

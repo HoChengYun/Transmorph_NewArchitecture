@@ -12,7 +12,7 @@ VoxelMorph 專案的 mix_exp*、mix_cascade、mix_pyramid 用的都是這一份�
 | 檔案 | 內容 |
 |---|---|
 | `common.py` | 官方基本版設定（`get_3DTransMorph_config`），只換影像大小與 Swin 視窗；存檔、讀檔 |
-| `train_mixv2.py` | 訓練（設定跟 mix_exp3 對齊，見下表）|
+| `train_mixv2.py` | 基本版的訓練。10-24 起預設照官方訓練方式（Adam amsgrad、lr 遞減、三向翻轉）；`--legacy` = 舊設定（對齊 mix_exp3，見下表），tm_mixv2 就是舊設定 |
 | `eval_mixv2.py` | Dice、folding 評估，算法跟 VoxelMorph 專案的 `ASD/test_dice.py` 一模一樣 |
 | `指令_AI_訓練.md` | AI 那台的 cmd 操作單 |
 | `train_mixv2_diff.py` | TransMorph-diff 的訓練（10-24，照官方訓練方式，只改訓練量；見下面「TransMorph-diff」）|
@@ -22,7 +22,9 @@ VoxelMorph 專案的 mix_exp*、mix_cascade、mix_pyramid 用的都是這一份�
 ## 跟官方、跟 VoxelMorph（mix_exp3）的差別
 
 > 🟡 **tm_mixv2（`runs	m_mixv2\`，test 0.8139）是舊程式練的**：commit `38d3cd5` 的 `train_mixv2.py`，訓練方式全部對齊 mix_exp3（下表「這裡」那欄）。
-> 2026-10-24 使用者：「不一定要特別和 mix_exp3 一樣」→ 之後的 TransMorph 改成盡量照官方的訓練方式（TransMorph-diff 已經是；基本版要不要重練另議）。
+> 2026-10-24 使用者：「不一定要特別和 mix_exp3 一樣」→ `train_mixv2.py` 預設改成官方訓練方式，舊設定留成 `--legacy`
+> （跟 commit `38d3cd5` 逐步比對：抽到的受試者相同，loss 差在小數第 6 位，跟舊程式自己跑兩次的差異一樣大，是 GPU 計算不固定）。
+> 基本版**先不重練**（使用者 10-24），tm_mixv2 照舊用，但要註明是舊設定。
 
 | 項目 | 官方 IXI | **這裡** | mix_exp3 |
 |---|---|---|---|

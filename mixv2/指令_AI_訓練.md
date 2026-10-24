@@ -6,6 +6,8 @@
 > 跑的機器：**AI**。🔴 **一次只跑一顆**：這顆約用 13 GB，跟 VoxelMorph 那邊的訓練（cascade_pyramid 19 GB、pyramid_500 約 10 GB）不能同時跑。
 > 指令全部是 **cmd（命令提示字元）** 語法。
 > 最後更新：2026-10-17（建環境改以 virtualenv 為主，venv 當備案；AI 的 torch 改成 2.11.0+cu126，跟 AI 的 vxm_env 一樣）
+>
+> 🟡 **2026-10-24 起 `train_mixv2.py` 預設改成官方訓練方式**。下面的訓練指令是 tm_mixv2（舊設定）當初用的；要重現 tm_mixv2 請在訓練指令最後加 `--legacy`。
 
 ---
 
