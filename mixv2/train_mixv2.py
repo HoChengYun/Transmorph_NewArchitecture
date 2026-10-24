@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 """TransMorph（基本版）在 mixed_v2 上訓練，設定跟 VoxelMorph 專案的 mix_exp3 對齊，只差網路架構。
 
+🟡 tm_mixv2（test 0.8139）就是這支（commit 38d3cd5）練的。2026-10-24 起之後的 TransMorph 改成盡量照官方訓練方式（見 README），這支算舊程式。
+
 跟 mix_exp3（ASD/run_train.py → voxelmorph-code/scripts/torch/train.py）一樣的地方：
   - 受試者 → atlas（scan-to-atlas）；atlas = IXI/atlas_mni152_09c_v3.npz（MNI152 2009c）
   - 每一步隨機挑一位受試者（可重複），batch 1；每輪 100 步、250 輪 = 25,000 步
@@ -9,8 +11,8 @@
   - 之後用 val 每 5 輪挑一次 epoch（eval_mixv2.py --step 5）
 存檔：每 --save-every（預設 5）輪的開頭存一顆 NNNN.pt，最後再存一顆 NNNN（= --epochs）.pt。
   一顆約 187 MB（4,679 萬個參數；VoxelMorph 一顆只有 1.6 MB），每輪都存的話 250 輪約 47 GB → 只存挑 epoch 會用到的那些（51 顆、約 9.5 GB）
-跟官方 train_TransMorph.py 不同的地方（2026-10-17 使用者決定「跟我們對齊」）：
-  - 官方：每輪跑完全部訓練資料、500 輪（約 20 萬步）、學習率 poly 遞減、Adam amsgrad、左右翻轉、每輪用 val 存檔只留 8 個
+跟官方 train_TransMorph.py 不同的地方（2026-10-17 我建議「跟我們對齊」、使用者同意）：
+  - 官方：每輪跑完全部訓練資料、500 輪（約 20 萬步）、學習率 poly 遞減、Adam amsgrad、三個方向各 50% 隨機翻轉（atlas 和受試者一起翻）、每輪用 val 存檔只留 8 個
 log 每一步一行，格式同 VoxelMorph 專案的 train_arch.py（epoch: NNNN  step: k/100  time: …  loss: 總 (影像項, 平滑項)），
 ASD/plot_loss_curve.py 可以直接讀。計時前先 torch.cuda.synchronize()，每步時間才準。
 
