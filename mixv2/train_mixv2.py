@@ -4,9 +4,12 @@
 2026-10-24 起預設改成官方的訓練方式（使用者：「不一定要特別和 mix_exp3 一樣」，跟 train_mixv2_diff.py 同一套）：
   - Adam amsgrad，lr 1e-4 每輪 poly 0.9 遞減（同官方 train_TransMorph.py 的 adjust_learning_rate）
   - 官方 trans.RandomFlip：三個方向各 50% 翻轉，受試者和 atlas 一起翻
-  訓練量（2.5 萬步）、影像大小、受試者 → atlas、存檔與挑 epoch 不變。
-🟡 --legacy = 舊設定（下面「跟 mix_exp3 一樣」那段：Adam、lr 固定、不翻轉），tm_mixv2（test 0.8139）就是舊設定練的
-  （commit 38d3cd5；--legacy 跟那版逐步相同，筆電驗證過）。
+2026-10-28（使用者：「第一步先重現原作，只改逼不得已的」）：每輪也照官方 = 全部訓練資料洗牌、每位跑一次（418 步），
+  預設 500 輪（官方 max_epoch）。訓練量可以用 --epochs 改（使用者：訓練量不必照原作），poly 會跟著總輪數走。
+  舊的「每輪隨機抽 100 位（可重複）」= --steps-per-epoch 100（亂數順序跟以前一樣）。
+  跟官方仍不同、逼不得已的：影像大小與 Swin 視窗、受試者 → atlas（使用者選的方向）、存檔與挑 epoch（我們的 val Dice）。
+🟡 --legacy = 舊設定（下面「跟 mix_exp3 一樣」那段：Adam、lr 固定、不翻轉、每輪 100 步、250 輪），
+  tm_mixv2（test 0.8139）就是舊設定練的（commit 38d3cd5；--legacy 跟那版逐步相同，筆電驗證過）。
 
 舊設定跟 mix_exp3（ASD/run_train.py → voxelmorph-code/scripts/torch/train.py）一樣的地方：
   - 受試者 → atlas（scan-to-atlas）；atlas = IXI/atlas_mni152_09c_v3.npz（MNI152 2009c）
@@ -36,8 +39,9 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument('train_dir', help='訓練資料夾（npz：vol、seg；seg 訓練時不用）')
 ap.add_argument('--atlas', required=True, help='atlas 影像 npz（key: vol）')
 ap.add_argument('--model-dir', required=True)
-ap.add_argument('--epochs', type=int, default=250)
-ap.add_argument('--steps-per-epoch', type=int, default=100)
+ap.add_argument('--epochs', type=int, default=None, help='預設 500（官方）；--legacy 時 250')
+ap.add_argument('--steps-per-epoch', type=int, default=None,
+                help='預設 = 全部訓練資料洗牌跑一次（官方）；給數字 = 每輪隨機抽這麼多位（可重複，舊做法）；--legacy 時 100')
 ap.add_argument('--lr', type=float, default=1e-4)
 ap.add_argument('--lambda', dest='lam', type=float, default=1.0, help='平滑項權重（同 VoxelMorph 的 --lambda）')
 ap.add_argument('--legacy', action='store_true', help='舊設定（tm_mixv2）：Adam、lr 固定、不翻轉')
@@ -49,6 +53,10 @@ ap.add_argument('--seed', type=int, default=None)
 ap.add_argument('--crop', type=int, nargs=3, help='測試用：只取中間這麼大一塊（每邊要能被 32 整除），模型照這個大小蓋')
 ap.add_argument('--max-steps', type=int, default=0, help='測試用：總共只跑幾步就停，並印顯存峰值')
 args = ap.parse_args()
+if args.epochs is None:
+    args.epochs = 250 if args.legacy else 500
+if args.steps_per_epoch is None:
+    args.steps_per_epoch = 100 if args.legacy else 0
 
 os.environ['CUDA_VISIBLE_DEVICES'] = args.gpu
 import torch                                    # noqa: E402
@@ -112,8 +120,9 @@ def say(msg):
 n_par = sum(p.numel() for p in model.parameters())
 say('指令：' + ' '.join(sys.argv))
 say('架構：TransMorph（基本版、位移場），共 %d 個參數；影像 %s、Swin 視窗 %s；影像項 ncc（窗格 9），λ = %g；'
-    '%d 位訓練資料；每輪 %d 步、到第 %d 輪；%s' % (n_par, 'x'.join(map(str, img_size)), window, args.lam,
-                                          len(files), args.steps_per_epoch, args.epochs,
+    '%d 位訓練資料；每輪 %s、到第 %d 輪；%s' % (n_par, 'x'.join(map(str, img_size)), window, args.lam,
+                                          len(files), '隨機抽 %d 位' % args.steps_per_epoch if args.steps_per_epoch
+                                          else '全部洗牌跑一次（%d 步）' % len(files), args.epochs,
                                           'lr %g（固定）【舊設定 --legacy】' % args.lr if args.legacy else
                                           'Adam amsgrad lr %g（poly 0.9 遞減）；翻轉 開（三個方向各 50%%）【官方訓練方式】' % args.lr))
 done = 0
@@ -123,9 +132,11 @@ for epoch in range(args.initial_epoch, args.epochs):
     if not args.legacy:
         for g in optimizer.param_groups:        # 同官方 adjust_learning_rate（同一輪內不變）
             g['lr'] = round(args.lr * np.power(1 - epoch / args.epochs, 0.9), 8)
-    for step in range(args.steps_per_epoch):
+    n_steps = args.steps_per_epoch or len(files)
+    perm = None if args.steps_per_epoch else np.random.permutation(len(files))     # 官方 DataLoader(shuffle=True)
+    for step in range(n_steps):
         t0 = time.time()
-        m = np.load(files[np.random.randint(len(files))])['vol'].astype(np.float32)
+        m = np.load(files[perm[step] if perm is not None else np.random.randint(len(files))])['vol'].astype(np.float32)
         x = torch.from_numpy(crop(m))[None, None].to(device)
         y = atlas_t
         if not args.legacy:
@@ -141,7 +152,7 @@ for epoch in range(args.initial_epoch, args.epochs):
         optimizer.step()
         torch.cuda.synchronize()
         say('epoch: %04d  step: %d/%d  time: %.2f sec  loss: %.6f  (%.6f, %.6f)'
-            % (epoch + 1, step + 1, args.steps_per_epoch, time.time() - t0, loss.item(), l_sim.item(), l_reg.item()))
+            % (epoch + 1, step + 1, n_steps, time.time() - t0, loss.item(), l_sim.item(), l_reg.item()))
         done += 1
         if args.max_steps and done >= args.max_steps:
             say('--max-steps %d 到了，停止（測試用）。顯存峰值：實際用到 %.2f GB、PyTorch 預留 %.2f GB'

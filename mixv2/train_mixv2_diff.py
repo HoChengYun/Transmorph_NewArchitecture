@@ -10,8 +10,11 @@
     （官方 Base.__call__ 用了 Python 3.10 已拿掉的 collections.Sequence，所以直接叫它的 sample()、tf()，效果一樣）
 跟官方不一樣的地方（同 train_mixv2.py）：
   - 影像 192×224×192、Swin 視窗 (6, 7, 6)；受試者 → atlas（官方 atlas → 受試者）
-  - 訓練量：每步隨機挑一位（可重複），每輪 100 步、250 輪 = 25,000 步（官方 500 輪 × 每輪全部，約 20 萬步）
   - 每 --save-every 輪存一顆，練完用 eval_mixv2.py 以 val Dice 挑（官方訓練中看 val、只留 8 顆）
+2026-10-28（使用者：「第一步先重現原作，只改逼不得已的」）：每輪改成照官方 = 全部訓練資料洗牌、每位跑一次，預設 500 輪。
+  訓練量可以用 --epochs 改（poly 跟著總輪數走）。
+🟡 tm_diff_mixv2 是舊設定練的：每步隨機挑一位（可重複）、每輪 100 步、250 輪 = 25,000 步
+  → 重現它要加 --epochs 250 --steps-per-epoch 100（亂數順序跟以前一樣）。
 log 格式同 train_mixv2.py：loss: 總 (影像項, 正則項)。
 
 用法（筆電試跑）：
@@ -29,8 +32,9 @@ ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDe
 ap.add_argument('train_dir', help='訓練資料夾（npz：vol、seg；seg 訓練時不用）')
 ap.add_argument('--atlas', required=True, help='atlas 影像 npz（key: vol）')
 ap.add_argument('--model-dir', required=True)
-ap.add_argument('--epochs', type=int, default=250)
-ap.add_argument('--steps-per-epoch', type=int, default=100)
+ap.add_argument('--epochs', type=int, default=500, help='官方 500')
+ap.add_argument('--steps-per-epoch', type=int, default=0,
+                help='0 = 全部訓練資料洗牌跑一次（官方）；給數字 = 每輪隨機抽這麼多位（可重複，tm_diff_mixv2 的舊做法是 100）')
 ap.add_argument('--lr', type=float, default=1e-4)
 ap.add_argument('--no-flip', action='store_true', help='關掉翻轉（預設照官方開）')
 ap.add_argument('--gpu', default='0')
@@ -48,6 +52,12 @@ import torch                                    # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import build_model, save_model, load_model, IMG_SIZE, WINDOW   # noqa: E402
 from data import trans                          # noqa: E402  官方 IXI/TransMorph/data/trans.py（common.py 已加進 sys.path）
+
+for _stream in (sys.stdout, sys.stderr):        # 10-28：Windows 主控台 cp950 印不出「σ²」的「²」，會直接中斷
+    try:
+        _stream.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 if args.seed is not None:
     np.random.seed(args.seed)
@@ -105,18 +115,21 @@ def poly_lr(epoch):
 n_par = sum(p.numel() for p in model.parameters())
 say('指令：' + ' '.join(sys.argv))
 say('架構：TransMorph-diff（官方 TransMorphDiff-Org-Res），共 %d 個參數；影像 %s、Swin 視窗 %s；損失 MSE/σ²（σ = %g）＋ KL'
-    '（prior_lambda %g、prior_lambda_mean %g）；%d 位訓練資料；每輪 %d 步、到第 %d 輪；Adamax lr %g（poly 0.9 遞減）；翻轉 %s'
+    '（prior_lambda %g、prior_lambda_mean %g）；%d 位訓練資料；每輪 %s、到第 %d 輪；Adamax lr %g（poly 0.9 遞減）；翻轉 %s'
     % (n_par, 'x'.join(map(str, img_size)), window, net.image_sigma, net.prior_lambda, net.prior_lambda_mean,
-       len(files), args.steps_per_epoch, args.epochs, args.lr, '關' if args.no_flip else '開（三個方向各 50%）'))
+       len(files), '隨機抽 %d 位' % args.steps_per_epoch if args.steps_per_epoch else '全部洗牌跑一次（%d 步）' % len(files),
+       args.epochs, args.lr, '關' if args.no_flip else '開（三個方向各 50%）'))
 done = 0
 for epoch in range(args.initial_epoch, args.epochs):
     if epoch % args.save_every == 0:
         save_model(model, os.path.join(args.model_dir, '%04d.pt' % epoch), epoch=epoch)
     for g in optimizer.param_groups:
         g['lr'] = poly_lr(epoch)
-    for step in range(args.steps_per_epoch):
+    n_steps = args.steps_per_epoch or len(files)
+    perm = None if args.steps_per_epoch else np.random.permutation(len(files))     # 官方 DataLoader(shuffle=True)
+    for step in range(n_steps):
         t0 = time.time()
-        m = crop(np.load(files[np.random.randint(len(files))])['vol'].astype(np.float32))[None]
+        m = crop(np.load(files[perm[step] if perm is not None else np.random.randint(len(files))])['vol'].astype(np.float32))[None]
         a = atlas_c
         if not args.no_flip:
             flip.sample()                        # 同官方 Base.__call__：抽一次，兩張用同一組
@@ -132,7 +145,7 @@ for epoch in range(args.initial_epoch, args.epochs):
         optimizer.step()
         torch.cuda.synchronize()
         say('epoch: %04d  step: %d/%d  time: %.2f sec  loss: %.6f  (%.6f, %.6f)'
-            % (epoch + 1, step + 1, args.steps_per_epoch, time.time() - t0, loss.item(), l_sim.item(), l_reg.item()))
+            % (epoch + 1, step + 1, n_steps, time.time() - t0, loss.item(), l_sim.item(), l_reg.item()))
         done += 1
         if args.max_steps and done >= args.max_steps:
             say('--max-steps %d 到了，停止（測試用）。顯存峰值：實際用到 %.2f GB、PyTorch 預留 %.2f GB'
